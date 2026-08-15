@@ -45,6 +45,21 @@ def create_literature_agent(model: str = None):
     """
     model = model or settings.default_model
 
+    # 检查API密钥，未配置时使用模拟模式
+    if not settings.openai_api_key and not settings.anthropic_api_key:
+        print("[提示] 未配置LLM API密钥，Agent将以演示模式创建")
+        # 返回一个模拟的Agent对象，仅用于演示结构
+        class MockAgent:
+            def invoke(self, inputs):
+                return {
+                    "messages": [
+                        type("Message", (), {
+                            "content": "演示模式：请配置API密钥后使用完整功能"
+                        })()
+                    ]
+                }
+        return MockAgent()
+
     agent = create_deep_agent(
         model=model,
         tools=[
