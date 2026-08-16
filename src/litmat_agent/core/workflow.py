@@ -19,6 +19,9 @@ class WorkflowState(TypedDict):
     query: str
     max_results: int
 
+    # 任务规划阶段
+    plan: dict
+
     # 检索阶段
     retrieved_papers: list[dict]
     filtered_papers: list[dict]
@@ -53,6 +56,7 @@ class LiteratureWorkflow:
     def _build_graph(self):
         """构建工作流图"""
         # 添加节点
+        self.workflow.add_node("plan", self._plan_node)
         self.workflow.add_node("retrieve", self._retrieve_node)
         self.workflow.add_node("filter", self._filter_node)
         self.workflow.add_node("parse", self._parse_node)
@@ -60,10 +64,11 @@ class LiteratureWorkflow:
         self.workflow.add_node("analyze", self._analyze_node)
         self.workflow.add_node("generate_report", self._report_node)
 
-        # 设置入口点
-        self.workflow.set_entry_point("retrieve")
+        # 设置入口点（任务规划为入口）
+        self.workflow.set_entry_point("plan")
 
         # 添加边
+        self.workflow.add_edge("plan", "retrieve")
         self.workflow.add_edge("retrieve", "filter")
         self.workflow.add_edge("filter", "parse")
         self.workflow.add_edge("parse", "extract")
@@ -85,6 +90,53 @@ class LiteratureWorkflow:
         return "continue"
 
     # 节点函数（返回增量更新，避免 add_messages 重复合并）
+    def _plan_node(self, state: WorkflowState) -> dict:
+        """任务规划节点：分解研究问题并生成调研计划"""
+        try:
+            from litmat_agent.agents.planner_agent import (
+                create_research_plan,
+                decompose_task,
+            )
+
+            decompose_result = json.loads(
+                decompose_task.invoke({"query": state["query"]})
+            )
+            plan_result = json.loads(
+                create_research_plan.invoke({
+                    "query": state["query"],
+                    "max_results": state["max_results"],
+                })
+            )
+
+            plan = {
+                "query": state["query"],
+                "detected_domains": decompose_result.get("detected_domains", []),
+                "target_properties": decompose_result.get("target_properties", []),
+                "search_queries": decompose_result.get("search_queries", []),
+                "steps": plan_result.get("steps", []),
+            }
+
+            return {
+                "plan": plan,
+                "messages": [
+                    (
+                        "system",
+                        f"任务规划完成：识别{len(plan['detected_domains'])}个领域，"
+                        f"生成{len(plan['search_queries'])}个检索子问题",
+                    )
+                ],
+            }
+        except Exception as e:
+            return {
+                "plan": {
+                    "query": state["query"],
+                    "detected_domains": [],
+                    "search_queries": [state["query"]],
+                    "steps": [],
+                },
+                "messages": [("system", f"任务规划降级：{e}")],
+            }
+
     def _retrieve_node(self, state: WorkflowState) -> dict:
         """文献检索节点：调用Sci-Base本地检索"""
         try:

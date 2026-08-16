@@ -40,11 +40,12 @@ with st.sidebar:
 
     st.subheader("Agent 清单")
     agents = [
-        "1. 文献调研 Agent（检索+抽取）",
-        "2. 文献筛选 Agent（相关性+去重）",
-        "3. 知识融合 Agent（对齐+冲突检测）",
-        "4. 研究分析 Agent（构效关系+假设）",
-        "5. 报告生成 Agent（结构化报告）",
+        "1. 任务规划 Agent（问题分解+计划）",
+        "2. 文献调研 Agent（检索+抽取）",
+        "3. 文献筛选 Agent（相关性+去重）",
+        "4. 知识融合 Agent（对齐+冲突检测）",
+        "5. 研究分析 Agent（构效关系+假设）",
+        "6. 报告生成 Agent（结构化报告）",
     ]
     for agent in agents:
         st.caption(agent)
@@ -229,6 +230,7 @@ else:
 ### 系统能力
 | 阶段 | 组件 | 技术实现 |
 |------|------|---------|
+| 任务规划 | 规划Agent | 问题分解 + 9阶段调研计划 |
 | 文献检索 | Sci-Base + Sciverse | Elasticsearch + 实时API |
 | 文献筛选 | 筛选Agent | 相关性评分 + DOI去重 |
 | PDF解析 | MinerU | 版面分析 + 文本提取 |

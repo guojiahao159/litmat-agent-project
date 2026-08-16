@@ -8,7 +8,7 @@ LitMat-Agent 是一个基于 LangChain DeepAgent 构建的材料科学文献调�
 
 ## 核心功能
 
-- **5个专业化Agent**：文献调研、文献筛选、知识融合、研究分析、报告生成
+- **6个专业化Agent**：任务规划、文献调研、文献筛选、知识融合、研究分析、报告生成
 - **多源文献检索**：Sci-Base本地库（Elasticsearch）+ Sciverse实时API
 - **混合检索**：BGE-M3语义检索 + BM25关键词检索 + BGE-Reranker重排序
 - **知识抽取**：材料成分识别、性能数据抽取、单位统一
@@ -66,7 +66,8 @@ uv run streamlit run app.py
 ```
 litmat-agent-project/
 ├── src/litmat_agent/          # 源代码
-│   ├── agents/                # Agent模块（5个）
+│   ├── agents/                # Agent模块（6个）
+│   │   ├── planner_agent.py      # 任务规划Agent
 │   │   ├── literature_agent.py   # 文献调研Agent
 │   │   ├── filter_agent.py       # 文献筛选Agent
 │   │   ├── fusion_agent.py       # 知识融合Agent
