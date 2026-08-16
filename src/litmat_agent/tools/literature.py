@@ -1,53 +1,14 @@
-"""文献处理工具"""
+"""文献处理工具（兼容层：转发到已实现模块）
 
-from typing import Optional
+本模块保留原有函数名以兼容早期调用方，
+实际功能由 sci_base / knowledge_extraction / pdf_parser 模块提供。
+"""
 
-from langchain_core.tools import tool
+from litmat_agent.tools.knowledge_extraction import extract_material_knowledge
+from litmat_agent.tools.pdf_parser import parse_pdf_with_mineru
+from litmat_agent.tools.sci_base import search_sci_base
 
-
-@tool
-def search_literature(query: str, max_results: int = 10) -> str:
-    """搜索材料科学文献
-
-    Args:
-        query: 搜索查询，如 "sulfide solid electrolyte ionic conductivity"
-        max_results: 返回结果数量
-
-    Returns:
-        文献列表的JSON字符串
-    """
-    # TODO: 实现Sci-Base本地检索 + Sciverse API调用
-    return f"搜索 '{query}' 的前{max_results}篇文献（待实现）"
-
-
-@tool
-def extract_material_info(paper_text: str) -> dict:
-    """从文献文本中抽取材料信息
-
-    Args:
-        paper_text: 文献全文或摘要文本
-
-    Returns:
-        抽取的材料信息字典
-    """
-    # TODO: 实现材料成分、结构、性能抽取
-    return {
-        "materials": [],
-        "properties": [],
-        "synthesis_methods": [],
-        "status": "待实现",
-    }
-
-
-@tool
-def parse_pdf(pdf_path: str) -> str:
-    """解析PDF文献
-
-    Args:
-        pdf_path: PDF文件路径
-
-    Returns:
-        解析后的文本内容
-    """
-    # TODO: 集成MinerU进行PDF解析
-    return f"PDF解析结果（待实现）: {pdf_path}"
+# 向后兼容别名
+search_literature = search_sci_base
+extract_material_info = extract_material_knowledge
+parse_pdf = parse_pdf_with_mineru

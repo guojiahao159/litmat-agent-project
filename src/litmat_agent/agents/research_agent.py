@@ -4,7 +4,7 @@ from deepagents import create_deep_agent
 from langchain_core.tools import tool
 
 from litmat_agent.core.config import settings
-from litmat_agent.tools import search_literature, extract_material_info
+from litmat_agent.tools import extract_material_knowledge, search_sci_base
 
 
 @tool
@@ -77,13 +77,17 @@ def create_research_agent(model: str = None):
     agent = create_deep_agent(
         model=model,
         tools=[
-            search_literature,
-            extract_material_info,
+            search_sci_base,
+            extract_material_knowledge,
             analyze_structure_property,
             generate_hypothesis,
             suggest_validation,
         ],
         system_prompt="""你是LitMat-Agent的研究分析模块，专注于固态电解质的构效关系发现。
+
+你可以使用以下工具完成分析任务：
+1. search_sci_base: 检索Sci-Base本地文献库（关键词+向量检索）
+2. extract_material_knowledge: 从文献文本抽取材料成分、性能数据（自动单位统一）
 
 你的核心任务：
 1. 分析材料的成分-结构-性能关联
