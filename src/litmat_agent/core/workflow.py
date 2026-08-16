@@ -37,6 +37,9 @@ class WorkflowState(TypedDict):
     research_gaps: list[dict]
     hypotheses: list[dict]
 
+    # 证据核验阶段
+    evidence_chains: list[dict]
+
     # 输出
     report: str
     error: str
@@ -62,6 +65,7 @@ class LiteratureWorkflow:
         self.workflow.add_node("parse", self._parse_node)
         self.workflow.add_node("extract", self._extract_node)
         self.workflow.add_node("analyze", self._analyze_node)
+        self.workflow.add_node("verify", self._verify_node)
         self.workflow.add_node("generate_report", self._report_node)
 
         # 设置入口点（任务规划为入口）
@@ -73,7 +77,8 @@ class LiteratureWorkflow:
         self.workflow.add_edge("filter", "parse")
         self.workflow.add_edge("parse", "extract")
         self.workflow.add_edge("extract", "analyze")
-        self.workflow.add_edge("analyze", "generate_report")
+        self.workflow.add_edge("analyze", "verify")
+        self.workflow.add_edge("verify", "generate_report")
         self.workflow.add_edge("generate_report", END)
 
         # 添加条件边（错误处理）
@@ -138,23 +143,52 @@ class LiteratureWorkflow:
             }
 
     def _retrieve_node(self, state: WorkflowState) -> dict:
-        """文献检索节点：调用Sci-Base本地检索"""
+        """文献检索节点：Sci-Base本地检索 + Sciverse实时API多源检索"""
         try:
             from litmat_agent.tools.sci_base import search_sci_base
 
+            papers = []
+            messages = []
+
+            # 1) Sci-Base本地检索
             result = search_sci_base.invoke({
                 "query": state["query"],
                 "max_results": state["max_results"],
             })
-            papers = json.loads(result)
-            if isinstance(papers, dict) and "error" in papers:
-                return {
-                    "retrieved_papers": [],
-                    "messages": [("system", f"文献检索降级：{papers['error']}")],
-                }
+            sci_base_result = json.loads(result)
+            if isinstance(sci_base_result, dict) and "error" in sci_base_result:
+                messages.append(f"Sci-Base检索降级：{sci_base_result['error']}")
+            else:
+                papers = sci_base_result
+                messages.append(f"Sci-Base命中{len(papers)}篇")
+
+            # 2) Sciverse补充/兜底（Sci-Base失败或结果不足时）
+            if len(papers) < state["max_results"]:
+                from litmat_agent.tools.sciverse import search_sciverse
+
+                sciverse_result = json.loads(
+                    search_sciverse.invoke({
+                        "query": state["query"],
+                        "max_results": state["max_results"] - len(papers),
+                    })
+                )
+                sciverse_papers = sciverse_result.get("results", [])
+                if sciverse_papers:
+                    # 按标题去重合并
+                    existing_titles = {
+                        (p.get("title") or "").lower() for p in papers
+                    }
+                    for p in sciverse_papers:
+                        if (p.get("title") or "").lower() not in existing_titles:
+                            papers.append(p)
+                            existing_titles.add((p.get("title") or "").lower())
+                    messages.append(f"Sciverse补充{len(sciverse_papers)}篇")
+                elif "error" in sciverse_result:
+                    messages.append(f"Sciverse降级：{sciverse_result['error']}")
+
             return {
                 "retrieved_papers": papers,
-                "messages": [("system", f"文献检索完成：命中{len(papers)}篇")],
+                "messages": [("system", "文献检索完成：" + "；".join(messages))],
             }
         except Exception as e:
             return {
@@ -243,13 +277,18 @@ class LiteratureWorkflow:
                 for p in knowledge.get("properties", []):
                     p["paper_title"] = paper.get("title", "")
                     properties.append(p)
+            # 知识库存储（PostgreSQL + Neo4j，失败时优雅降级）
+            store_note = self._store_knowledge_node(
+                materials, properties, state["parsed_papers"]
+            )
+
             return {
                 "extracted_materials": materials,
                 "extracted_properties": properties,
                 "messages": [
                     (
                         "system",
-                        f"知识抽取完成：{len(materials)}个材料，{len(properties)}条性能数据",
+                        f"知识抽取完成：{len(materials)}个材料，{len(properties)}条性能数据；{store_note}",
                     )
                 ],
             }
@@ -259,6 +298,94 @@ class LiteratureWorkflow:
                 "extracted_properties": [],
                 "messages": [("system", f"知识抽取异常：{e}")],
             }
+
+    def _store_knowledge_node(self, materials: list, properties: list, papers: list) -> str:
+        """知识库存储：写入PostgreSQL + Neo4j（失败时优雅降级）
+
+        Args:
+            materials: 抽取的材料实体
+            properties: 抽取的性能数据
+            papers: 文献列表
+
+        Returns:
+            存储结果描述
+        """
+        try:
+            from litmat_agent.core.database import (
+                get_neo4j_manager,
+                get_postgres_manager,
+            )
+
+            pg = get_postgres_manager()
+            pg.create_tables()
+
+            paper_id_map = {}
+            for paper in papers:
+                if not paper.get("title"):
+                    continue
+                try:
+                    paper_id = pg.add_paper(paper)
+                    paper_id_map[paper["title"]] = paper_id
+                except Exception:
+                    continue
+
+            saved_materials = 0
+            for m in materials:
+                title = m.get("paper_title", "")
+                paper_id = paper_id_map.get(title)
+                if paper_id is None:
+                    continue
+                try:
+                    pg.add_material(paper_id, {
+                        "formula": m.get("formula", ""),
+                        "material_type": m.get("material_type"),
+                        "crystal_structure": m.get("crystal_structure"),
+                    })
+                    saved_materials += 1
+                except Exception:
+                    continue
+
+            saved_properties = 0
+            for p in properties:
+                title = p.get("paper_title", "")
+                paper_id = paper_id_map.get(title)
+                if paper_id is None:
+                    continue
+                try:
+                    pg.add_property(paper_id, {
+                        "material_formula": p.get("material_formula"),
+                        "property_name": p.get("property", ""),
+                        "value": p.get("value", 0.0),
+                        "unit": p.get("unit"),
+                    })
+                    saved_properties += 1
+                except Exception:
+                    continue
+
+            # Neo4j图存储（可选，失败不影响主流程）
+            graph_saved = False
+            try:
+                neo4j = get_neo4j_manager()
+                neo4j.create_constraints()
+                for paper in papers:
+                    if paper.get("doi") and paper.get("title"):
+                        neo4j.add_paper_node(paper)
+                for m in materials[:50]:
+                    formula = m.get("formula", "")
+                    if formula:
+                        neo4j.add_material_node(formula)
+                graph_saved = True
+            except Exception:
+                graph_saved = False
+
+            note = f"知识库存储完成：文献{len(paper_id_map)}篇，材料{saved_materials}条，性能{saved_properties}条"
+            if graph_saved:
+                note += "，图数据库已更新"
+            return note
+        except Exception as e:
+            # 截断冗长的连接错误堆栈，仅保留首行
+            err = str(e).split("\n")[0][:120]
+            return f"知识库存储降级：{err}"
 
     def _analyze_node(self, state: WorkflowState) -> dict:
         """分析节点：材料频率统计与性能冲突检测"""
@@ -316,6 +443,84 @@ class LiteratureWorkflow:
                 "messages": [("system", f"分析异常：{e}")],
             }
 
+    def _verify_node(self, state: WorkflowState) -> dict:
+        """证据核验节点：为每个Gap构建可审计证据链"""
+        try:
+            from litmat_agent.core.evidence import get_tracker
+
+            tracker = get_tracker()
+            chains = []
+
+            for i, gap in enumerate(state["research_gaps"], 1):
+                hypothesis_id = f"gap_{i}"
+                prop_name = gap.get("property", "")
+
+                # 找到支持该Gap的性能数据作为证据
+                supporting = [
+                    p for p in state["extracted_properties"]
+                    if p.get("property") == prop_name
+                ]
+                for p in supporting:
+                    quote = (
+                        f"{p.get('paper_title', '文献')} 报道 {prop_name} = "
+                        f"{p.get('value')} {p.get('unit', '')}"
+                    )
+                    tracker.add_evidence(
+                        hypothesis_id=hypothesis_id,
+                        paper_id=p.get("paper_title", "unknown"),
+                        quote_text=quote,
+                        confidence=0.8,
+                    )
+
+                chain = tracker.build_chain(hypothesis_id)
+                chains.append({
+                    "gap_index": i,
+                    "hypothesis_id": hypothesis_id,
+                    "property": prop_name,
+                    "evidence_count": len(chain),
+                    "evidence": chain,
+                })
+
+            # 各假设的证据链
+            for i, hyp in enumerate(state["hypotheses"], 1):
+                hypothesis_id = f"hyp_{i}"
+                formula = hyp.get("formula", "")
+                supporting = [
+                    m for m in state["extracted_materials"]
+                    if m.get("formula") == formula
+                ]
+                for m in supporting:
+                    tracker.add_evidence(
+                        hypothesis_id=hypothesis_id,
+                        paper_id=m.get("paper_title", "unknown"),
+                        quote_text=f"{m.get('paper_title', '文献')} 报道材料 {formula}",
+                        confidence=0.6,
+                    )
+                chain = tracker.build_chain(hypothesis_id)
+                chains.append({
+                    "gap_index": None,
+                    "hypothesis_id": hypothesis_id,
+                    "property": formula,
+                    "evidence_count": len(chain),
+                    "evidence": chain,
+                })
+
+            return {
+                "evidence_chains": chains,
+                "messages": [
+                    (
+                        "system",
+                        f"证据核验完成：{len(chains)}条证据链，"
+                        f"共{sum(c['evidence_count'] for c in chains)}条证据",
+                    )
+                ],
+            }
+        except Exception as e:
+            return {
+                "evidence_chains": [],
+                "messages": [("system", f"证据核验降级：{e}")],
+            }
+
     def _report_node(self, state: WorkflowState) -> dict:
         """报告生成节点：汇总生成结构化报告"""
         try:
@@ -338,6 +543,7 @@ class LiteratureWorkflow:
                 },
                 "research_gaps": state["research_gaps"],
                 "hypotheses": state["hypotheses"],
+                "evidence_chains": state.get("evidence_chains", []),
                 "messages": messages,
             }
             if state.get("error"):
