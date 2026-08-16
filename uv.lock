@@ -1123,6 +1123,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "rank-bm25" },
+    { name = "requests" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy" },
 ]
@@ -1141,6 +1142,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "sentence-transformers", specifier = ">=5.7.0" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
 ]
